@@ -131,10 +131,10 @@ def search_movies():
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
-    host="rp37.mysql.pythonanywhere-services.com",
-    user="rp37",
+    host="localhost",
+    user="root",
     password="DB1017490!",
     database="sakila"
     )
-    # CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
-    # app.run(host='127.0.0.1', port=8080, debug=True)
+    CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
+    app.run(host='127.0.0.1', port=8080, debug=True)
