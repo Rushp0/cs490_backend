@@ -3,6 +3,7 @@ from flask import request
 from flask_cors import CORS
 import json
 import mysql.connector
+import os
 
 app = Flask(__name__)
 
@@ -31,11 +32,10 @@ def get_top_rented_movies():
         LIMIT 5;
     """)
     
-    films = {"results": []}
+    films = {"Access-Control-Allow-Origin": '*',"results": []}
 
     for row in cursor:
         films["results"].append(dict(zip(cursor.column_names, row)))
-    films["Access-Control-Allow-Origin"] = '*'
     return films
 
 # MOVIE TITLE MUST BE ENCODED WITH SPACES AS %20
@@ -131,9 +131,9 @@ def search_movies():
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="DB1017490!",
+    host=os.environ["DB_HOST"],
+    user=os.environ["DB_USER"],
+    password=os.environ["DB_PASS"],
     database="sakila"
     )
     CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
