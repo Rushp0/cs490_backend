@@ -129,6 +129,33 @@ def search_movies():
     films["Access-Control-Allow-Origin"] = '*'
     return films
 
+@app.route("/api/actor/top_actors")
+def top_actors():
+    cursor = db.cursor()
+
+    cursor.execute("""
+    SELECT
+	    actor.actor_id,
+        actor.first_name,
+        actor.last_name,
+        COUNT(*) AS Movies
+    FROM actor
+    JOIN film_actor
+    ON film_actor.actor_id = actor.actor_id
+    JOIN film
+    ON film_actor.film_id = film.film_id
+    GROUP BY actor_id
+    ORDER BY Movies DESC
+    LIMIT 5;
+    """)
+
+    actors = {"Access-Control-Allow-Origin": '*',"results": []}
+    for row in cursor:
+        actors["results"].append(dict(zip(cursor.column_names, row)))
+    
+    return actors
+
+
 if __name__ == '__main__':
     db = mysql.connector.connect(
     host=os.environ["DB_HOST"],
