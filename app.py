@@ -35,7 +35,7 @@ def get_top_rented_movies():
 
     for row in cursor:
         films["results"].append(dict(zip(cursor.column_names, row)))
-
+    films["Access-Control-Allow-Origin"] = '*'
     return films
 
 # MOVIE TITLE MUST BE ENCODED WITH SPACES AS %20
@@ -43,7 +43,6 @@ def get_top_rented_movies():
 def get_movie_details():
     title = request.args.get('title', default="", type = str)
 
-    
     if title == "":
         return {}
 
@@ -71,8 +70,9 @@ def get_movie_details():
     
     if cursor.rowcount < 1:
         return {}
-
-    return dict(zip(cursor.column_names, cursor.fetchone()))
+    response = dict(zip(cursor.column_names, cursor.fetchone()))
+    response["Access-Control-Allow-Origin"] = '*'
+    return response
 
 @app.route("/api/movie/search")
 def search_movies():
@@ -125,15 +125,16 @@ def search_movies():
 
     for row in cursor:
         films["results"].append(dict(zip(cursor.column_names, row)))
-
+        
+    films["Access-Control-Allow-Origin"] = '*'
     return films
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
-    host="localhost",
-    user="root",
+    host="rp37.mysql.pythonanywhere-services.com",
+    user="rp37",
     password="DB1017490!",
     database="sakila"
     )
-    CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
-    app.run(host='127.0.0.1', port=8080, debug=True)
+    # CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
+    # app.run(host='127.0.0.1', port=8080, debug=True)
