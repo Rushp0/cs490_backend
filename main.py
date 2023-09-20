@@ -155,6 +155,75 @@ def top_actors():
     
     return actors
 
+@app.route("/api/actor/actor_details")
+def get_actor_details():
+    actor_name = request.args.get('actor', default="", type = str)
+
+    if actor_name == "":
+        return {}
+    
+    cursor = db.cursor(buffered=True)
+    actor = {"first_name": actor_name.split(" ")[0], "last_name": actor_name.split(" ")[1]}
+    response = {"Access-Control-Allow-Origin": '*'}
+
+    get_actor_id = """SELECT
+	    actor.actor_id,
+        actor.first_name,
+        actor.last_name
+    FROM actor
+    WHERE actor.first_name = '{}' AND actor.last_name = '{}';""".format(actor["first_name"], actor["last_name"])
+
+    cursor.execute(get_actor_id)
+
+    data = cursor.fetchone()
+    columns = cursor.column_names
+
+    response.update(dict(zip(columns, data)))
+
+    get_num_movies = """
+    SELECT
+	    actor.actor_id,
+	    actor.first_name,
+	    actor.last_name,
+	    COUNT(*) as 'movies'
+    FROM actor
+    JOIN film_actor
+    ON film_actor.actor_id = actor.actor_id
+    JOIN film
+    ON film_actor.film_id = film.film_id
+    WHERE film_actor.actor_id = {};""".format(response["actor_id"])
+
+    cursor.execute(get_num_movies)
+    data = cursor.fetchone()
+    columns = cursor.column_names
+    response.update(dict(zip(columns, data)))
+
+    get_top_5_rented_movies = """
+    SELECT
+	    film.title,
+        COUNT(payment.rental_id) as count
+    FROM film
+    JOIN inventory
+    ON inventory.film_id = film.film_id
+    JOIN rental
+    ON rental.inventory_id = inventory.inventory_id
+    JOIN payment
+    ON payment.rental_id = rental.rental_id
+    JOIN film_actor
+    ON film_actor.film_id = film.film_id
+    WHERE film_actor.actor_id = {}
+    GROUP BY film.title
+    ORDER BY count DESC
+    LIMIT 5;""".format(response["actor_id"])
+
+    cursor.execute(get_top_5_rented_movies)
+    response["top movies"] = []
+    for row in cursor:
+        response["top movies"].append(dict(zip(cursor.column_names, row)))
+
+    return response
+
+
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
