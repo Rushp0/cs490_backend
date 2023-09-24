@@ -38,10 +38,9 @@ def get_top_rented_movies():
         films["results"].append(dict(zip(cursor.column_names, row)))
     return films
 
-# MOVIE TITLE MUST BE ENCODED WITH SPACES AS %20
 @app.route("/api/movie/movie_details")
 def get_movie_details():
-    title = request.args.get('title', default="", type = str)
+    title = request.args.get('film_id', default="", type = str)
 
     if title == "":
         return {}
@@ -61,7 +60,7 @@ def get_movie_details():
     ON film.film_id = film_category.film_id
     JOIN category
     ON film_category.category_id = category.category_id
-    WHERE film.title = "{}";
+    WHERE film.film_id = "{}";
     """.format(title)
 
     print(statement)
@@ -79,6 +78,8 @@ def search_movies():
     title = request.args.get('title', default="%", type = str)
     actor = request.args.get('actor', default="%", type = str)
     genre = request.args.get('genre', default="%", type = str)
+    limit = request.args.get('limit', default=30, type = int)
+    offset = request.args.get('offset', default=0, type = int)
     
     if actor == "%":
         actor = {}
@@ -94,7 +95,9 @@ def search_movies():
             actor["first_name"] = actor_split[0]
             actor["last_name"] = actor_split[1]
 
-    statement = """   SELECT DISTINCT
+    statement = """   
+    SELECT DISTINCT
+        film.film_id,
 	    film.title,
         film.release_year,
         film.description,
@@ -115,8 +118,10 @@ def search_movies():
     WHERE film.title LIKE "{}%"
     AND actor.first_name LIKE "{}%"
     AND actor.last_name LIKE "{}%"
-    AND category.name LIKE "{}%";
-    """.format(title, actor["first_name"], actor["last_name"], genre)
+    AND category.name LIKE "{}%"
+    LIMIT {}
+    OFFSET {};
+    """.format(title, actor["first_name"], actor["last_name"], genre, limit, offset)
 
     cursor = db.cursor()
     cursor.execute(statement)
@@ -221,8 +226,7 @@ def get_actor_details():
     for row in cursor:
         response["top movies"].append(dict(zip(cursor.column_names, row)))
 
-    return response
-
+    return response 
 
 
 if __name__ == '__main__':
