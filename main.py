@@ -228,6 +228,72 @@ def get_actor_details():
 
     return response 
 
+@app.route("/api/customer/search")
+def search_customers():
+    customer_id = request.args.get('customer_id', default="%", type = int)
+    name = request.args.get('name', default="%", type=str)
+    limit = request.args.get('limit', default=30, type = int)
+    offset = request.args.get('offset', default=0, type = int)
+
+    if name == "%":
+        name = {}
+        name["first_name"] = "%"
+        name["last_name"] = "%"
+    else:
+        name_split = name.split(" ")
+        name = {}
+        if len(name) < 2:
+            name["first_name"] = name_split[0]
+            name["last_name"] = "%"
+        else:
+            name["first_name"] = name_split[0]
+            name["last_name"] = name_split[1]
+
+    statement = """
+    SELECT 
+	    customer.customer_id,
+        customer.first_name,
+        customer.last_name,
+        customer.email,
+        address.address,
+        address.address2,
+        address.postal_code,
+        address.phone,
+        city.city,
+        country.country
+    FROM customer
+    JOIN  address
+    ON address.address_id = customer.address_id
+    JOIN city
+    ON city.city_id = address.city_id
+    JOIN country
+    ON country.country_id = city.country_id
+    WHERE 
+        customer.customer_id LIKE "{}%"
+        AND customer.first_name LIKE "{}%"
+        AND customer.last_name LIKE "{}"
+    ORDER BY customer_id ASC
+    LIMIT {}
+    OFFSET {};
+    """.format(customer_id, name["first_name"], name["last_name"], limit, offset)
+
+    cursor = db.cursor()
+    cursor.execute(statement)
+
+    customers = {"results": []}
+    customers["Access-Control-Allow-Origin"] = '*'
+
+    for row in cursor:
+        temp_dict = dict(zip(cursor.column_names, row))
+        customer = {"customer_id": temp_dict["customer_id"],
+                    "name" : temp_dict["first_name"] + " " + temp_dict["last_name"],
+                    "email" : temp_dict["email"],
+                    "phone" : temp_dict["phone"],
+                    "address" : temp_dict["address"] + ", " +temp_dict["city"] + ", " + temp_dict["postal_code"] + ", " + temp_dict["country"]
+                    }
+        customers["results"].append(customer)
+        
+    return customers
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
