@@ -4,16 +4,38 @@ from flask_cors import CORS
 import json
 import mysql.connector
 import os
+import logging
+from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
 
+logger = logging.getLogger()
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(error):
+    error_dict = {
+        'code': error.code,
+        'description': error.description,
+        'stack_trace': traceback.format_exc() 
+    }
+    log_msg = f"HTTPException {error_dict.code}, Description: {error_dict.description}, Stack trace: {error_dict.stack_trace}"
+    logger.log(msg=log_msg)
+    response = jsonify(error_dict)
+    response.status_code = error.code
+    return response
+
 @app.route("/api/healthcheck")
 def hello_world():
-    return json.loads('{"status": "ok"}')
+    return json.loads('{"Access-Control-Allow-Origin": "*", "status1": "ok"}')
 
 @app.route("/api/movie/top_rented_movies")
 def get_top_rented_movies():
-
+    db = mysql.connector.connect(
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASS"],
+        database="sakila"
+        )
     cursor = db.cursor()
     cursor.execute("""
         SELECT
@@ -42,6 +64,13 @@ def get_top_rented_movies():
 def get_movie_details():
     title = request.args.get('film_id', default="", type = str)
 
+    db = mysql.connector.connect(
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASS"],
+        database="sakila"
+    )
+
     if title == "":
         return {}
 
@@ -63,7 +92,6 @@ def get_movie_details():
     WHERE film.film_id = "{}";
     """.format(title)
 
-    print(statement)
 
     cursor.execute(statement)
     
@@ -167,6 +195,13 @@ def get_actor_details():
     if actor_name == "":
         return {}
     
+    db = mysql.connector.connect(
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASS"],
+        database="sakila"
+    )
+
     cursor = db.cursor(buffered=True)
     actor = {"first_name": actor_name.split(" ")[0], "last_name": actor_name.split(" ")[1]}
     response = {"Access-Control-Allow-Origin": '*'}
@@ -297,10 +332,12 @@ def search_customers():
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
-    host=os.environ["DB_HOST"],
-    user=os.environ["DB_USER"],
-    password=os.environ["DB_PASS"],
-    database="sakila"
-    )
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASS"],
+        database="sakila"
+        )
     CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
     app.run(host='127.0.0.1', port=8080, debug=True)
+
+ 
