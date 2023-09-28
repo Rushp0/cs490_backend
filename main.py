@@ -330,6 +330,72 @@ def search_customers():
         
     return customers
 
+@app.route("/api/customer/customer_details")
+def get_customer_details():
+    customer_id = request.args.get("customer_id", default="", type = int)
+
+    statement = """SELECT 
+        customer.customer_id,
+        customer.first_name,
+        customer.last_name,
+        customer.email,
+        address.address,
+        address.address2,
+        address.postal_code,
+        address.phone,
+        city.city,
+        country.country
+    FROM customer
+    JOIN  address
+    ON address.address_id = customer.address_id
+    JOIN city
+    ON city.city_id = address.city_id
+    JOIN country
+    ON country.country_id = city.country_id
+    WHERE customer.customer_id = {}
+    ORDER BY customer_id ASC;""". format(customer_id)
+
+    cursor = db.cursor(buffered=True)
+    cursor.execute(statement)
+    response = {}
+    temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+    customer = {"Access-Control-Allow-Origin": '*',
+                "customer_id": temp_dict["customer_id"],
+                "name" : temp_dict["first_name"] + " " + temp_dict["last_name"],
+                "email" : temp_dict["email"],
+                "phone" : temp_dict["phone"],
+                "address" : temp_dict["address"] + ", " +temp_dict["city"] + ", " + temp_dict["postal_code"] + ", " + temp_dict["country"]
+                }
+    
+    response.update(customer)
+    response["rented movies"] = []
+
+    # get movies rented by customer
+    statement = """SELECT film.title FROM film
+JOIN inventory
+ON inventory.film_id = film.film_id
+JOIN rental
+ON rental.inventory_id = inventory.inventory_id
+JOIN customer
+ON customer.customer_id = rental.customer_id
+WHERE customer.customer_id = {};""".format(response["customer_id"])
+
+    cursor.execute(statement)
+
+    for row in cursor:
+        response["rented movies"].append(row[0])
+
+    return response
+
+@app.route("/api/movie/rent-movie", methods = ["POST"])
+def rent_movie():
+    staff_id = request.args.get("staff_id", default="", type=int)
+    inventory_id = request.args.get("inventory_id", default="", type=int)
+    customer_id = request.args.get("customer_id", default="", type=int)
+
+    if(staff_id == "" or inventory_id == "" or customer_id == ""):
+        return {"error": "Missing Information"}
+
 if __name__ == '__main__':
     db = mysql.connector.connect(
         host=os.environ["DB_HOST"],
