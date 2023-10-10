@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, Response
 from flask import request
 from flask_cors import CORS
 import json
@@ -78,6 +78,7 @@ def get_movie_details():
 
     statement  = """
     SELECT 
+        film.film_id,
 	    film.title,
         film.release_year,
         film.description,
@@ -387,14 +388,74 @@ WHERE customer.customer_id = {};""".format(response["customer_id"])
 
     return response
 
-@app.route("/api/movie/rent-movie", methods = ["POST"])
+@app.route("/api/movie/rent_movie", methods=['POST'])
 def rent_movie():
-    staff_id = request.args.get("staff_id", default="", type=int)
-    inventory_id = request.args.get("inventory_id", default="", type=int)
-    customer_id = request.args.get("customer_id", default="", type=int)
-
-    if(staff_id == "" or inventory_id == "" or customer_id == ""):
+    if request.method == "OPTIONS":
+        return {}
+    data = json.loads(request.get_data())
+    
+    if(data["staff_id"] == "" or data["inventory_id"] == "" or data["customer_id"] == ""):
         return {"error": "Missing Information"}
+    
+    # data validated and verified in js
+    data['inventory_id'] = 1
+    statement = """INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
+VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(data["inventory_id"], data["customer_id"], data["staff_id"])
+    
+    try:    
+        cursor = db.cursor(buffered=True)
+        cursor.execute(statement)
+        db.commit()
+        return {"status": 200}
+    except mysql.connector.Error as error:
+        return {"status": 404, "error": "{}".format(error)}
+
+@app.route("/api/verify", methods=['GET'])
+def verify():
+    employee_username = request.args.get("employee_username", default="-1", type=str)
+    customer_id = request.args.get("customer_id", default="-1", type=int)
+    film_id = request.args.get("film_id", default="-1", type=int)
+
+    employee_username_statement = """SELECT * FROM staff WHERE username='{}';""".format(employee_username)
+    customer_id_statement = """SELECT * FROM customer WHERE customer_id={};""".format(customer_id)
+    film_id_statement = """SELECT * FROM inventory JOIN film 
+        ON film.film_id = inventory.film_id
+        WHERE film.film_id = {}
+        LIMIT 1;""".format(film_id)
+    
+    response = {}
+    data_not_found_flag = False
+
+    # check for customer id
+    cursor = db.cursor(buffered=True)
+    cursor.execute(customer_id_statement)
+    if(cursor.rowcount == 0):
+        data_not_found_flag = True
+        response["customer_id"] = {"status": 404, "error": "Data not found"}
+    
+    # check film id
+    cursor.execute(film_id_statement)
+    if(cursor.rowcount == 0):
+        if(not data_not_found_flag):
+            data_not_found_flag = True
+        response["film_id"] = {"status": 404, "error": "Data not found"}
+
+    # check employee id
+    cursor.execute(employee_username_statement)
+    if(cursor.rowcount == 0):
+        if(not data_not_found_flag):
+            data_not_found_flag = True
+        response["employee_username"] = {"status": 404, "error": "Data not found"}
+
+    # response if input is not verified
+    if(data_not_found_flag):
+        response["status"] = 404
+        return response
+    else:
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        return {"status": 200, "message": "Verified", "password_hash": temp_dict["password"], "staff_id": temp_dict["staff_id"]}
+    
+    
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
@@ -405,5 +466,3 @@ if __name__ == '__main__':
         )
     CORS(app, resources={r"/api/*": {"origins": "http://localhost"}})
     app.run(host='127.0.0.1', port=8080, debug=True)
-
- 
