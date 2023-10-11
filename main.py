@@ -172,13 +172,20 @@ def rent_movie():
     if(data["staff_id"] == "" or data["inventory_id"] == "" or data["customer_id"] == ""):
         return {"error": "Missing Information"}
     
+    cursor = db.cursor(buffered=True) 
+    # get inventory id from film id
+    get_inventory_id_statement = """SELECT inventory_id FROM inventory JOIN film on film.film_id = inventory.film_id WHERE film.film_id=%s;"""
+    cursor.execute(get_inventory_id_statement, (data["inventory_id"],))
+    temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+
+    
     # data validated and verified in js
     data['inventory_id'] = 1
     statement = """INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
-VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(data["inventory_id"], data["customer_id"], data["staff_id"])
+VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(temp_dict["inventory_id"], data["customer_id"], data["staff_id"])
     
     try:    
-        cursor = db.cursor(buffered=True)
+   
         cursor.execute(statement)
         db.commit()
         return {"status": 200}
@@ -475,6 +482,56 @@ def update_customer_data():
         return {"status": 400, "error": "{}".format(error)}
     return {"status": 200}
 
+@app.route("/api/customer/add", methods=["POST"])
+def add_customer():
+    data = request.json
+
+    try:
+        cursor = db.cursor(buffered=True)
+
+        # get country ID
+        get_country_id_statement = """SELECT * FROM country WHERE country LIKE %s;"""
+        cursor.execute(get_country_id_statement, (data["country"],))
+        if(cursor.rowcount == 0):
+            return {"status": 400, "error": "Invalid Country"}
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        country_id = temp_dict["country_id"]
+
+        # get city id
+        get_city_id_statement = """SELECT * FROM city WHERE city LIKE %s;"""
+        cursor.execute(get_city_id_statement, (data["city"],))
+        if(cursor.rowcount == 0):
+            # if city doesnt exist
+            add_city_statement = """INSERT INTO city(city, country_id) VALUES(%s, %s);"""
+            cursor.execute(add_city_statement, (data["city"], country_id))
+            db.commit()
+
+            get_city_id_statement = """SELECT * FROM city WHERE city LIKE %s"""
+            cursor.execute(get_city_id_statement, (data["city"],))
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        city_id = temp_dict["city_id"]
+
+        insert_address_statement = """
+            INSERT INTO address(phone, address, address2, district, postal_code, city_id, location)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s));"""
+        cursor.execute(insert_address_statement, (data['phone'], data['address'], data['address2'], data['district'], data['postal_code'], city_id, "POINT(-40.35 23.04)"))
+        db.commit()
+
+        # get address id
+        get_address_id_statement = """SELECT * FROM address ORDER BY address_id DESC;"""
+        cursor.execute(get_address_id_statement)
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        address_id = temp_dict["address_id"]
+
+        # insert customer into customer table
+        insert_customer = """INSERT INTO customer(store_id, first_name, last_name, email, address_id) VALUES(%s,%s,%s,%s,%s);"""
+        cursor.execute(insert_customer, (1, data["first_name"], data["last_name"], data["email"], address_id))
+        db.commit()
+
+    except mysql.connector.Error as error:
+        return {"status": 400, "error": "{}".format(error)}
+    
+    return {"status": 200}
 
 @app.route("/api/verify", methods=['GET'])
 def verify():
