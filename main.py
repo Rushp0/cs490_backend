@@ -9,6 +9,12 @@ from werkzeug.exceptions import HTTPException
 from fpdf import FPDF
 
 app = Flask(__name__)
+db = mysql.connector.connect(
+    host=os.environ["DB_HOST"],
+    user=os.environ["DB_USER"],
+    password=os.environ["DB_PASS"],
+    database="sakila"
+)
 
 logger = logging.getLogger()
 
@@ -31,12 +37,6 @@ def hello_world():
 
 @app.route("/api/movie/top_rented_movies")
 def get_top_rented_movies():
-    db = mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASS"],
-        database="sakila"
-        )
     cursor = db.cursor()
     cursor.execute("""
         SELECT
@@ -63,16 +63,9 @@ def get_top_rented_movies():
 
 @app.route("/api/movie/movie_details")
 def get_movie_details():
-    title = request.args.get('film_id', default="", type = str)
+    film_id = request.args.get('film_id', default=-1, type = int)
 
-    db = mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASS"],
-        database="sakila"
-    )
-
-    if title == "":
+    if film_id == -1:
         return {}
 
     cursor = db.cursor(buffered=True)
@@ -91,11 +84,11 @@ def get_movie_details():
     ON film.film_id = film_category.film_id
     JOIN category
     ON film_category.category_id = category.category_id
-    WHERE film.film_id = "{}";
-    """.format(title)
+    WHERE film.film_id = %s;
+    """
 
 
-    cursor.execute(statement)
+    cursor.execute(statement, (film_id,))
     
     if cursor.rowcount < 1:
         return {}
@@ -105,70 +98,84 @@ def get_movie_details():
 
 @app.route("/api/movie/search")
 def search_movies():
-    title = request.args.get('title', default="%", type = str)
-    actor = request.args.get('actor', default="%", type = str)
-    genre = request.args.get('genre', default="%", type = str)
+    title = request.args.get('title', default="", type = str)
+    actor = request.args.get('actor', default="", type = str)
+    genre = request.args.get('genre', default="", type = str)
     limit = request.args.get('limit', default=30, type = int)
     offset = request.args.get('offset', default=0, type = int)
     
-    if actor == "%":
-        actor = {}
-        actor["first_name"] = "%"
-        actor["last_name"] = "%"
+    cursor = db.cursor()
+    if actor == "":
+        statement = """   
+        SELECT 
+            DISTINCT (film.film_id),
+            film.title,
+            film.release_year,
+            film.description,
+            film.length,
+            category.name as category
+        FROM
+            film
+        JOIN film_category
+        ON film.film_id = film_category.film_id
+        JOIN category
+        ON film_category.category_id = category.category_id
+        JOIN film_actor
+        ON film_actor.film_id = film.film_id
+        WHERE film.title LIKE %s
+        AND category.name LIKE %s
+        LIMIT %s
+        OFFSET %s;
+        """
+        cursor.execute(statement, (title+"%", genre+"%", limit, offset))
     else:
         actor_split = actor.split(" ")
         actor = {}
         if len(actor) < 2:
             actor["first_name"] = actor_split[0]
-            actor["last_name"] = "%"
+            actor["last_name"] = ""
         else:
             actor["first_name"] = actor_split[0]
             actor["last_name"] = actor_split[1]
-
-    statement = """   
-    SELECT DISTINCT
-        film.film_id,
-	    film.title,
-        film.release_year,
-        film.description,
-        film.length,
-        category.name as category,
-        actor.first_name as 'first name',
-        actor.last_name as 'last name'
-    FROM
-	    film
-    JOIN film_category
-    ON film.film_id = film_category.film_id
-    JOIN category
-    ON film_category.category_id = category.category_id
-    JOIN film_actor
-    ON	film_actor.film_id = film.film_id
-    JOIN actor
-    ON	film_actor.actor_id = actor.actor_id
-    WHERE film.title LIKE "{}%"
-    AND actor.first_name LIKE "{}%"
-    AND actor.last_name LIKE "{}%"
-    AND category.name LIKE "{}%"
-    LIMIT {}
-    OFFSET {};
-    """.format(title, actor["first_name"], actor["last_name"], genre, limit, offset)
-
-    cursor = db.cursor()
-    cursor.execute(statement)
+        statement = """
+            SELECT DISTINCT
+                film.film_id,
+                film.title,
+                film.release_year,
+                film.description,
+                film.length,
+                category.name as category,
+                actor.first_name as 'first name',
+                actor.last_name as 'last name'
+            FROM
+                film
+            JOIN film_category
+            ON film.film_id = film_category.film_id
+            JOIN category
+            ON film_category.category_id = category.category_id
+            JOIN film_actor
+            ON film_actor.film_id = film.film_id
+            JOIN actor
+            ON	film_actor.actor_id = actor.actor_id
+            WHERE actor.first_name LIKE %s
+            AND actor.last_name LIKE %s
+            AND category.name LIKE %s
+            LIMIT %s
+            OFFSET %s;"""
+        cursor.execute(statement, (actor["first_name"]+"%", actor["last_name"]+"%", genre+"%", limit, offset))
 
     films = {"results": []}
-
-    for row in cursor:
-        films["results"].append(dict(zip(cursor.column_names, row)))
-        
+    try:
+        for row in cursor:
+            films["results"].append(dict(zip(cursor.column_names, row)))
+    except mysql.connector.Error as error:
+        return {"status": 400, "message": "{}".format(error)}        
     films["Access-Control-Allow-Origin"] = '*'
     return films
 
 @app.route("/api/movie/rent_movie", methods=['POST'])
 def rent_movie():
-    if request.method == "OPTIONS":
-        return {}
-    data = json.loads(request.get_data())
+    data = request.json
     
     if(data["staff_id"] == "" or data["inventory_id"] == "" or data["customer_id"] == ""):
         return {"error": "Missing Information"}
@@ -183,11 +190,11 @@ def rent_movie():
     # data validated and verified in js
     data['inventory_id'] = 1
     statement = """INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
-VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(temp_dict["inventory_id"], data["customer_id"], data["staff_id"])
+VALUES( CURRENT_TIMESTAMP, %s, %s, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), %s);"""
     
     try:    
    
-        cursor.execute(statement)
+        cursor.execute(statement, (temp_dict["inventory_id"], data["customer_id"], data["staff_id"]))
         db.commit()
         return {"status": 200}
     except mysql.connector.Error as error:
@@ -226,13 +233,6 @@ def get_actor_details():
     if actor_name == "":
         return {}
     
-    db = mysql.connector.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASS"],
-        database="sakila"
-    )
-
     cursor = db.cursor(buffered=True)
     actor = {"first_name": actor_name.split(" ")[0], "last_name": actor_name.split(" ")[1]}
     response = {"Access-Control-Allow-Origin": '*'}
@@ -242,9 +242,9 @@ def get_actor_details():
         actor.first_name,
         actor.last_name
     FROM actor
-    WHERE actor.first_name = '{}' AND actor.last_name = '{}';""".format(actor["first_name"], actor["last_name"])
+    WHERE actor.first_name = %s AND actor.last_name = %s;"""
 
-    cursor.execute(get_actor_id)
+    cursor.execute(get_actor_id, (actor["first_name"], actor["last_name"]))
 
     data = cursor.fetchone()
     columns = cursor.column_names
@@ -262,9 +262,9 @@ def get_actor_details():
     ON film_actor.actor_id = actor.actor_id
     JOIN film
     ON film_actor.film_id = film.film_id
-    WHERE film_actor.actor_id = {};""".format(response["actor_id"])
+    WHERE film_actor.actor_id = %s;"""
 
-    cursor.execute(get_num_movies)
+    cursor.execute(get_num_movies, (response["actor_id"],))
     data = cursor.fetchone()
     columns = cursor.column_names
     response.update(dict(zip(columns, data)))
@@ -282,12 +282,12 @@ def get_actor_details():
     ON payment.rental_id = rental.rental_id
     JOIN film_actor
     ON film_actor.film_id = film.film_id
-    WHERE film_actor.actor_id = {}
+    WHERE film_actor.actor_id = %s
     GROUP BY film.title
     ORDER BY count DESC
-    LIMIT 5;""".format(response["actor_id"])
+    LIMIT 5;"""
 
-    cursor.execute(get_top_5_rented_movies)
+    cursor.execute(get_top_5_rented_movies, (response["actor_id"],))
     response["top movies"] = []
     for row in cursor:
         response["top movies"].append(dict(zip(cursor.column_names, row)))
@@ -296,55 +296,81 @@ def get_actor_details():
 
 @app.route("/api/customer/search")
 def search_customers():
-    customer_id = request.args.get('customer_id', default="%", type = int)
-    name = request.args.get('name', default="%", type=str)
+    customer_id = request.args.get('customer_id', default=-1, type = int)
+    name = request.args.get('name', default="", type=str)
     limit = request.args.get('limit', default=30, type = int)
     offset = request.args.get('offset', default=0, type = int)
 
-    if name == "%":
-        name = {}
-        name["first_name"] = "%"
-        name["last_name"] = "%"
-    else:
-        name_split = name.split(" ")
-        name = {}
-        if len(name) < 2:
-            name["first_name"] = name_split[0]
-            name["last_name"] = "%"
-        else:
-            name["first_name"] = name_split[0]
-            name["last_name"] = name_split[1]
-
-    statement = """
-    SELECT 
-	    customer.customer_id,
-        customer.first_name,
-        customer.last_name,
-        customer.email,
-        address.address,
-        address.address2,
-        address.postal_code,
-        address.phone,
-        city.city,
-        country.country
-    FROM customer
-    JOIN  address
-    ON address.address_id = customer.address_id
-    JOIN city
-    ON city.city_id = address.city_id
-    JOIN country
-    ON country.country_id = city.country_id
-    WHERE 
-        customer.customer_id LIKE "{}%"
-        AND customer.first_name LIKE "{}%"
-        AND customer.last_name LIKE "{}"
-    ORDER BY customer_id ASC
-    LIMIT {}
-    OFFSET {};
-    """.format(customer_id, name["first_name"], name["last_name"], limit, offset)
-
     cursor = db.cursor()
-    cursor.execute(statement)
+    if(customer_id != -1):
+        statement = """
+            SELECT 
+                customer.customer_id,
+                customer.first_name,
+                customer.last_name,
+                customer.email,
+                address.address,
+                address.address2,
+                address.postal_code,
+                address.phone,
+                city.city,
+                country.country
+            FROM customer
+            JOIN  address
+            ON address.address_id = customer.address_id
+            JOIN city
+            ON city.city_id = address.city_id
+            JOIN country
+            ON country.country_id = city.country_id
+            WHERE 
+                customer.customer_id = %s
+            ORDER BY customer_id ASC
+            LIMIT %s
+            OFFSET %s;
+            """
+        cursor.execute(statement, (customer_id, limit, offset))
+
+    else:
+        if name == "":
+            name = {}
+            name["first_name"] = ""
+            name["last_name"] = ""
+        else:
+            name_split = name.split(" ")
+            name = {}
+            if len(name) < 2:
+                name["first_name"] = name_split[0]
+                name["last_name"] = ""
+            else:
+                name["first_name"] = name_split[0]
+                name["last_name"] = name_split[1]
+        statement = """
+            SELECT 
+                customer.customer_id,
+                customer.first_name,
+                customer.last_name,
+                customer.email,
+                address.address,
+                address.address2,
+                address.postal_code,
+                address.phone,
+                city.city,
+                country.country
+            FROM customer
+            JOIN  address
+            ON address.address_id = customer.address_id
+            JOIN city
+            ON city.city_id = address.city_id
+            JOIN country
+            ON country.country_id = city.country_id
+            WHERE 
+                customer.first_name LIKE %s
+                AND customer.last_name LIKE %s
+            ORDER BY customer_id ASC
+            LIMIT %s
+            OFFSET %s;
+            """
+        cursor.execute(statement, (name["first_name"]+"%", name["last_name"]+"%", limit, offset))
 
     customers = {"results": []}
     customers["Access-Control-Allow-Origin"] = '*'
@@ -384,11 +410,11 @@ def get_customer_details():
     ON city.city_id = address.city_id
     JOIN country
     ON country.country_id = city.country_id
-    WHERE customer.customer_id = {}
-    ORDER BY customer_id ASC;""".format(customer_id)
+    WHERE customer.customer_id = %s
+    ORDER BY customer_id ASC;"""
 
     cursor = db.cursor(buffered=True)
-    cursor.execute(statement)
+    cursor.execute(statement, (customer_id, ))
     response = {}
     temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
 
@@ -418,11 +444,11 @@ def get_customer_details():
 def delete_customer():
     customer_id = request.args.get("customer_id", default=0, type=int)
 
-    statement = """DELETE FROM CUSTOMER WHERE customer_id={};""".format(customer_id)
+    statement = """DELETE FROM CUSTOMER WHERE customer_id=%s;"""
 
     try:    
         cursor = db.cursor(buffered=True)
-        cursor.execute(statement)
+        cursor.execute(statement, (customer_id,))
         db.commit()
         return {"status": 200}
     except mysql.connector.Error as error:
@@ -540,32 +566,32 @@ def verify():
     customer_id = request.args.get("customer_id", default="-1", type=int)
     film_id = request.args.get("film_id", default="-1", type=int)
 
-    employee_username_statement = """SELECT * FROM staff WHERE username='{}';""".format(employee_username)
-    customer_id_statement = """SELECT * FROM customer WHERE customer_id={};""".format(customer_id)
+    employee_username_statement = """SELECT * FROM staff WHERE username=%s;"""
+    customer_id_statement = """SELECT * FROM customer WHERE customer_id=%s;"""
     film_id_statement = """SELECT * FROM inventory JOIN film 
         ON film.film_id = inventory.film_id
-        WHERE film.film_id = {}
-        LIMIT 1;""".format(film_id)
+        WHERE film.film_id = %s
+        LIMIT 1;"""
     
     response = {}
     data_not_found_flag = False
 
     # check for customer id
     cursor = db.cursor(buffered=True)
-    cursor.execute(customer_id_statement)
+    cursor.execute(customer_id_statement, (customer_id,))
     if(cursor.rowcount == 0):
         data_not_found_flag = True
         response["customer_id"] = {"status": 404, "error": "Data not found"}
     
     # check film id
-    cursor.execute(film_id_statement)
+    cursor.execute(film_id_statement, (film_id,))
     if(cursor.rowcount == 0):
         if(not data_not_found_flag):
             data_not_found_flag = True
         response["film_id"] = {"status": 404, "error": "Data not found"}
 
     # check employee id
-    cursor.execute(employee_username_statement)
+    cursor.execute(employee_username_statement, (employee_username,))
     if(cursor.rowcount == 0):
         if(not data_not_found_flag):
             data_not_found_flag = True
@@ -627,7 +653,6 @@ def report():
     pdf.ln(10)
 
     return Response(pdf.output(dest='S').encode('latin-1'), mimetype='application/pdf', headers={'Content-Disposition': 'attachment; filename=inventory_report.pdf'})
-
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
