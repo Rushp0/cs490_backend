@@ -1,4 +1,4 @@
-from flask import Flask, Response
+from flask import Flask, Response, request
 from flask import request
 from flask_cors import CORS
 import json
@@ -6,6 +6,7 @@ import mysql.connector
 import os
 import logging
 from werkzeug.exceptions import HTTPException
+from fpdf import FPDF
 
 app = Flask(__name__)
 
@@ -578,7 +579,55 @@ def verify():
         temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
         return {"status": 200, "message": "Verified", "password_hash": temp_dict["password"], "staff_id": temp_dict["staff_id"]}
     
-    
+@app.route("/api/report")
+def report():
+    statement = """
+    SELECT
+        film.film_id,
+        rental.inventory_id,
+        rental.customer_id,
+        rental.rental_date,
+        rental.return_date
+    FROM rental
+    JOIN inventory
+    ON inventory.inventory_id = rental.rental_id
+    JOIN store
+    ON store.store_id = inventory.store_id
+    JOIN film
+    ON film.film_id = inventory.film_id
+    WHERE store.store_id = 1
+    ORDER BY inventory_id ASC, customer_id ASC;"""
+
+    cursor = db.cursor(buffered=True)
+    cursor.execute(statement)
+
+    pdf = FPDF()
+    pdf.add_page()
+
+    page_width = pdf.w - 2 * pdf.l_margin
+    pdf.set_font('Times', 'B', 14.0)
+    pdf.cell(page_width, 0.0, 'Inventory Report', align='C')
+    pdf.ln(10)
+    col_width = page_width/5
+    pdf.ln(1)
+
+    th = pdf.font_size
+    for column in cursor.column_names:
+        pdf.cell(col_width, th, str(column), border=1)
+        
+    pdf.ln(5)
+    for row in cursor:
+        row_data = dict(zip(cursor.column_names, row))
+        pdf.cell(col_width, th, str(row_data["film_id"]), border=1)
+        pdf.cell(col_width, th, str(row_data["inventory_id"]), border=1)
+        pdf.cell(col_width, th, str(row_data["customer_id"]), border=1)
+        pdf.cell(col_width, th, str(row_data["rental_date"]).split(" ")[0], border=1)
+        pdf.cell(col_width, th, str(row_data["return_date"]).split(" ")[0], border=1)
+        pdf.ln(5)
+    pdf.ln(10)
+
+    return Response(pdf.output(dest='S').encode('latin-1'), mimetype='application/pdf', headers={'Content-Disposition': 'attachment; filename=inventory_report.pdf'})
+
 
 if __name__ == '__main__':
     db = mysql.connector.connect(
