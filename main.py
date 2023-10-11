@@ -163,6 +163,28 @@ def search_movies():
     films["Access-Control-Allow-Origin"] = '*'
     return films
 
+@app.route("/api/movie/rent_movie", methods=['POST'])
+def rent_movie():
+    if request.method == "OPTIONS":
+        return {}
+    data = json.loads(request.get_data())
+    
+    if(data["staff_id"] == "" or data["inventory_id"] == "" or data["customer_id"] == ""):
+        return {"error": "Missing Information"}
+    
+    # data validated and verified in js
+    data['inventory_id'] = 1
+    statement = """INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
+VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(data["inventory_id"], data["customer_id"], data["staff_id"])
+    
+    try:    
+        cursor = db.cursor(buffered=True)
+        cursor.execute(statement)
+        db.commit()
+        return {"status": 200}
+    except mysql.connector.Error as error:
+        return {"status": 404, "error": "{}".format(error)}
+
 @app.route("/api/actor/top_actors")
 def top_actors():
     cursor = db.cursor()
@@ -344,6 +366,7 @@ def get_customer_details():
         address.address2,
         address.postal_code,
         address.phone,
+        address.district,
         city.city,
         country.country
     FROM customer
@@ -354,32 +377,27 @@ def get_customer_details():
     JOIN country
     ON country.country_id = city.country_id
     WHERE customer.customer_id = {}
-    ORDER BY customer_id ASC;""". format(customer_id)
+    ORDER BY customer_id ASC;""".format(customer_id)
 
     cursor = db.cursor(buffered=True)
     cursor.execute(statement)
     response = {}
     temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
-    customer = {"Access-Control-Allow-Origin": '*',
-                "customer_id": temp_dict["customer_id"],
-                "name" : temp_dict["first_name"] + " " + temp_dict["last_name"],
-                "email" : temp_dict["email"],
-                "phone" : temp_dict["phone"],
-                "address" : temp_dict["address"] + ", " +temp_dict["city"] + ", " + temp_dict["postal_code"] + ", " + temp_dict["country"]
-                }
-    
-    response.update(customer)
+
+    response.update(temp_dict)
+    response["Access-Control-Allow-Origin"] = '*'
+    response["full_address"] = temp_dict["address"] + ", " +temp_dict["city"] + ", " + temp_dict["postal_code"] + ", " + temp_dict["country"]
     response["rented movies"] = []
 
     # get movies rented by customer
     statement = """SELECT film.title FROM film
-JOIN inventory
-ON inventory.film_id = film.film_id
-JOIN rental
-ON rental.inventory_id = inventory.inventory_id
-JOIN customer
-ON customer.customer_id = rental.customer_id
-WHERE customer.customer_id = {};""".format(response["customer_id"])
+        JOIN inventory
+        ON inventory.film_id = film.film_id
+        JOIN rental
+        ON rental.inventory_id = inventory.inventory_id
+        JOIN customer
+        ON customer.customer_id = rental.customer_id
+        WHERE customer.customer_id = {};""".format(response["customer_id"])
 
     cursor.execute(statement)
 
@@ -388,20 +406,12 @@ WHERE customer.customer_id = {};""".format(response["customer_id"])
 
     return response
 
-@app.route("/api/movie/rent_movie", methods=['POST'])
-def rent_movie():
-    if request.method == "OPTIONS":
-        return {}
-    data = json.loads(request.get_data())
-    
-    if(data["staff_id"] == "" or data["inventory_id"] == "" or data["customer_id"] == ""):
-        return {"error": "Missing Information"}
-    
-    # data validated and verified in js
-    data['inventory_id'] = 1
-    statement = """INSERT INTO rental (rental_date, inventory_id, customer_id, return_date, staff_id)
-VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), {});""".format(data["inventory_id"], data["customer_id"], data["staff_id"])
-    
+@app.route("/api/customer/delete", methods=["DELETE"])
+def delete_customer():
+    customer_id = request.args.get("customer_id", default=0, type=int)
+
+    statement = """DELETE FROM CUSTOMER WHERE customer_id={};""".format(customer_id)
+
     try:    
         cursor = db.cursor(buffered=True)
         cursor.execute(statement)
@@ -409,6 +419,62 @@ VALUES( CURRENT_TIMESTAMP, {}, {}, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY), 
         return {"status": 200}
     except mysql.connector.Error as error:
         return {"status": 404, "error": "{}".format(error)}
+
+@app.route("/api/customer/update", methods=["PATCH"])
+def update_customer_data():
+    data = request.json
+    try:
+        cursor = db.cursor(buffered=True)
+
+        # get country ID
+        get_country_id_statement = """SELECT * FROM country WHERE country LIKE %s;"""
+        cursor.execute(get_country_id_statement, (data["country"],))
+        if(cursor.rowcount == 0):
+            return {"status": 400, "error": "Invalid Country"}
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        country_id = temp_dict["country_id"]
+
+        # get city id
+        get_city_id_statement = """SELECT * FROM city WHERE city LIKE %s;"""
+        cursor.execute(get_city_id_statement, (data["city"],))
+        if(cursor.rowcount == 0):
+            # if city doesnt exist
+            add_city_statement = """INSERT INTO city(city, country_id) VALUES(%s, %s);"""
+            cursor.execute(add_city_statement, (data["city"], country_id))
+            db.commit()
+
+            get_city_id_statement = """SELECT * FROM city WHERE city LIKE %s"""
+            cursor.execute(get_city_id_statement, (data["city"],))
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        city_id = temp_dict["city_id"]
+
+        # insert address
+        insert_address_statement = """
+            INSERT INTO address(phone, address, address2, district, postal_code, city_id, location)
+            VALUES (%s, %s, %s, %s, %s, %s, ST_GeomFromText(%s));"""
+        cursor.execute(insert_address_statement, (data['phone'], data['address'], data['address2'], data['district'], data['postal_code'], city_id, "POINT(-40.35 23.04)"))
+        db.commit()
+
+        # get address id
+        get_address_id_statement = """SELECT * FROM address ORDER BY address_id DESC;"""
+        cursor.execute(get_address_id_statement)
+        temp_dict = dict(zip(cursor.column_names, cursor.fetchone()))
+        address_id = temp_dict["address_id"]
+
+        update_customer_name_email_statement = """
+        UPDATE customer SET
+            first_name = %s,
+            last_name = %s,
+            email = %s,
+            address_id = %s
+        WHERE customer_id = %s;
+        """
+        cursor.execute(update_customer_name_email_statement, (data['first_name'], data['last_name'], data['email'], address_id, int(data["customer_id"])))
+        db.commit()
+    except mysql.connector.Error as error:
+        return {"status": 400, "error": "{}".format(error)}
+    return {"status": 200}
+
 
 @app.route("/api/verify", methods=['GET'])
 def verify():
